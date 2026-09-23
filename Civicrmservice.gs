@@ -37,64 +37,45 @@ var CiviCrmService = (function () {
 
   /** Calls a single GmailConnect action and returns its values. */
   function callApi(config, action, params) {
-    var body = post(config, '/GmailConnect/' + action, { params: JSON.stringify(params || {}) });
+    var body = post(config, '/GmailConnect/' + action, { params: JSON.stringify(params) });
     return body.values || [];
-  }
-
-  /**
-   * Runs several GmailConnect actions in one HTTP request.
-   * calls is {key: [action, params]}; returns {key: values}
-   */
-  function callBatch(config, calls) {
-    var payload = {};
-    Object.keys(calls).forEach(function (key) {
-      payload[key] = ['GmailConnect', calls[key][0], calls[key][1]];
-    });
-    var body = post(config, '', { calls: JSON.stringify(payload) });
-    var out = {};
-    Object.keys(calls).forEach(function (key) {
-      var result = body[key] || {};
-      if (result.error_message) {
-        throw new Error('CiviCRM API error: ' + result.error_message);
-      }
-      out[key] = result.values || [];
-    });
-    return out;
   }
 
   /** Checks the key is valid and the Gmail Connect endpoints are available. */
   function testConnection(config) {
-    var actions = callApi(config, 'getActions', { select: ['name'] }).map(function (a) { return a.name; });
-    if (actions.indexOf('recordActivity') === -1) {
-      throw new Error('The Gmail Connect endpoints are not available. Is the extension installed?');
-    }
+    callApi(config, 'getActions', {});
   }
 
   /**
-   * Looks up whether the email is already recorded and which
+   * Looks up, in one request, whether the email is already recorded and which
    * of the emails belong to contacts
    * Returns {activity: {id, url} | null, contacts: {lowercased email: {id, display_name, url}}}.
    */
   function lookup(config, rfcMessageId, emails) {
     var calls = {};
     if (rfcMessageId) {
-      calls.activity = ['getActivity', { messageId: rfcMessageId }];
+      calls.activity = ['GmailConnect', 'getActivity', { messageId: rfcMessageId }];
     }
     emails.forEach(function (email, i) {
-      calls['contact' + i] = ['getContact', { email: email }];
+      calls['contact' + i] = ['GmailConnect', 'getContact', { email: email }];
     });
     if (!Object.keys(calls).length) {
       return { activity: null, contacts: {} };
     }
 
-    var results = callBatch(config, calls);
+    var body = post(config, '', { calls: JSON.stringify(calls) });
+    Object.keys(calls).forEach(function (key) {
+      if (body[key].error_message) {
+        throw new Error('CiviCRM API error: ' + body[key].error_message);
+      }
+    });
     var contacts = {};
     emails.forEach(function (email, i) {
-      var values = results['contact' + i];
+      var values = body['contact' + i].values;
       if (values.length) contacts[email.toLowerCase()] = values[0];
     });
     return {
-      activity: (results.activity && results.activity.length) ? results.activity[0] : null,
+      activity: (body.activity && body.activity.values.length) ? body.activity.values[0] : null,
       contacts: contacts
     };
   }

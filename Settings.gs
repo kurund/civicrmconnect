@@ -7,6 +7,11 @@ function getDomainConfig(domain) {
   return raw ? JSON.parse(raw) : null;
 }
 
+/** Config for the active user's domain, or null if not connected yet. */
+function getConfig() {
+  return getDomainConfig(getUserDomain());
+}
+
 function saveDomainConfig(domain, config) {
   PropertiesService.getScriptProperties().setProperty('config_' + domain, JSON.stringify(config));
 }
@@ -31,29 +36,29 @@ function buildSettingsCard(message) {
 }
 
 function handleSaveSettings(e) {
-  var domain = getUserDomain();
   var config = {
     baseUrl: (e.formInput.baseUrl || '').trim(),
     apiKey: (e.formInput.apiKey || '').trim()
   };
 
-  var connected = false;
-  var notificationText;
   try {
     CiviCrmService.testConnection(config);
-    saveDomainConfig(domain, config);
-    connected = true;
-    notificationText = 'Connected! Open any email to look up its contacts.';
   } catch (err) {
-    notificationText = 'Connection failed: ' + err.message;
+    var text = 'Connection failed: ' + err.message;
+    return actionResponse(text, buildSettingsCard(text));
   }
+  saveDomainConfig(getUserDomain(), config);
+  return actionResponse('Connected! Open any email to look up its contacts.', buildHomepageCard(config));
+}
 
-  return CardService.newActionResponseBuilder()
-    .setNotification(CardService.newNotification().setText(notificationText))
-    .setNavigation(CardService.newNavigation().updateCard(
-      connected ? buildHomepageCard(getDomainConfig(domain)) : buildSettingsCard(notificationText)
-    ))
-    .build();
+/** Action response with a notification, optionally replacing the current card. */
+function actionResponse(text, card) {
+  var response = CardService.newActionResponseBuilder()
+    .setNotification(CardService.newNotification().setText(text));
+  if (card) {
+    response.setNavigation(CardService.newNavigation().updateCard(card));
+  }
+  return response.build();
 }
 
 function buildHomepageCard(config) {
@@ -73,16 +78,14 @@ function addMessageWidgets(section, msgInfo) {
   if (msgInfo.toEmails) {
     section.addWidget(CardService.newKeyValue().setTopLabel('To').setContent(msgInfo.toEmails).setMultiline(true));
   }
-  if (msgInfo.date) {
-    section.addWidget(CardService.newKeyValue().setTopLabel('Date').setContent(msgInfo.date));
-  }
+  section.addWidget(CardService.newKeyValue().setTopLabel('Date').setContent(msgInfo.date));
   if (msgInfo.snippet) {
     section.addWidget(CardService.newKeyValue().setTopLabel('Preview').setContent(msgInfo.snippet).setMultiline(true));
   }
 }
 
 function buildContactCard(config, msgInfo) {
-  var participants = msgInfo.participants || [];
+  var participants = msgInfo.participants;
   var found = CiviCrmService.lookup(config, msgInfo.rfcMessageId, participants.map(function (p) { return p.email; }));
 
   // Top: message details + record action (or link to the existing activity).
@@ -100,13 +103,11 @@ function buildContactCard(config, msgInfo) {
   } else {
     msgSection.addWidget(CardService.newTextButton()
       .setText('Record this email')
-      .setOnClickAction(CardService.newAction()
-        .setFunctionName('handleRecordActivity')
-        .setParameters({ messageId: msgInfo.messageId })));
+      .setOnClickAction(CardService.newAction().setFunctionName('handleRecordActivity')));
   }
 
   // Bottom: everyone on the message, each with a View or Add button.
-  var contactsSection = buildContactsSection(participants, found.contacts, msgInfo.messageId);
+  var contactsSection = buildContactsSection(participants, found.contacts);
 
   return CardService.newCardBuilder()
     .setHeader(CardService.newCardHeader().setTitle('CiviCRM Connect'))
@@ -116,7 +117,7 @@ function buildContactCard(config, msgInfo) {
 }
 
 /** Lists each participant with a View (exists) or Add (missing) button. */
-function buildContactsSection(participants, contacts, messageId) {
+function buildContactsSection(participants, contacts) {
   var section = CardService.newCardSection().setHeader('Contacts');
   if (!participants.length) {
     section.addWidget(CardService.newTextParagraph().setText('No participants found on this message.'));
@@ -137,7 +138,7 @@ function buildContactsSection(participants, contacts, messageId) {
         .setText('Add')
         .setOnClickAction(CardService.newAction()
           .setFunctionName('handleAddContact')
-          .setParameters({ address: p.address, email: p.email, messageId: messageId })));
+          .setParameters({ address: p.address, email: p.email })));
     }
     section.addWidget(row);
   });
@@ -146,26 +147,20 @@ function buildContactsSection(participants, contacts, messageId) {
 
 /** Adds a single participant to CiviCRM, then refreshes the card. */
 function handleAddContact(e) {
-  var config = getDomainConfig(getUserDomain());
+  var config = getConfig();
   var p = e.parameters;
 
-  var notificationText;
+  var contact;
   try {
-    var contact = CiviCrmService.addContact(config, p.address);
-    notificationText = contact.created
-      ? 'Added ' + p.email + ' to CiviCRM.'
-      : p.email + ' already exists in CiviCRM.';
+    contact = CiviCrmService.addContact(config, p.address);
   } catch (err) {
-    return CardService.newActionResponseBuilder()
-      .setNotification(CardService.newNotification().setText('Could not add: ' + err.message))
-      .build();
+    return actionResponse('Could not add: ' + err.message);
   }
 
-  var message = readCurrentMessage(e, p.messageId);
-  return CardService.newActionResponseBuilder()
-    .setNotification(CardService.newNotification().setText(notificationText))
-    .setNavigation(CardService.newNavigation().updateCard(buildContactCard(config, buildMsgInfo(message))))
-    .build();
+  var text = contact.created
+    ? 'Added ' + p.email + ' to CiviCRM.'
+    : p.email + ' already exists in CiviCRM.';
+  return actionResponse(text, buildContactCard(config, buildMsgInfo(readCurrentMessage(e))));
 }
 
 /**
@@ -174,14 +169,12 @@ function handleAddContact(e) {
  * returns the existing activity if the email was already recorded.
  */
 function handleRecordActivity(e) {
-  var config = getDomainConfig(getUserDomain());
-  var params = e.parameters;
+  var config = getConfig();
+  var message = readCurrentMessage(e);
 
-  var notificationText;
-  var message;
+  var activity;
   try {
-    message = readCurrentMessage(e, params.messageId);
-    var activity = CiviCrmService.recordActivity(config, {
+    activity = CiviCrmService.recordActivity(config, {
       subject: message.getSubject(),
       details: plainTextToHtml(message.getPlainBody() || '(No message body)'),
       from: message.getFrom(),
@@ -190,18 +183,13 @@ function handleRecordActivity(e) {
       bcc: splitAddressHeader(message.getBcc()),
       messageId: getRfcMessageId(message)
     });
-    notificationText = activity.created
-      ? 'Email recorded in CiviCRM.'
-      : 'This email was already recorded in CiviCRM.';
   } catch (err) {
-    return CardService.newActionResponseBuilder()
-      .setNotification(CardService.newNotification().setText('Could not record: ' + err.message))
-      .build();
+    return actionResponse('Could not record: ' + err.message);
   }
 
+  var text = activity.created
+    ? 'Email recorded in CiviCRM.'
+    : 'This email was already recorded in CiviCRM.';
   // Refresh so the card shows the recorded state and any new contacts.
-  return CardService.newActionResponseBuilder()
-    .setNotification(CardService.newNotification().setText(notificationText))
-    .setNavigation(CardService.newNavigation().updateCard(buildContactCard(config, buildMsgInfo(message))))
-    .build();
+  return actionResponse(text, buildContactCard(config, buildMsgInfo(message)));
 }
