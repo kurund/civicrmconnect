@@ -27,6 +27,7 @@ function onGmailMessageOpen(e) {
 function buildMsgInfo(message) {
   return {
     messageId: message.getId(),
+    rfcMessageId: getRfcMessageId(message),
     subject: message.getSubject(),
     senderEmail: extractEmailAddress(message.getFrom()),
     toEmails: message.getTo(),
@@ -37,95 +38,20 @@ function buildMsgInfo(message) {
 }
 
 /**
- * Resolves the CMS, preferring CiviCRM's own config (userFrameworkUsersTableName)
- * over markup sniffing. Falls back to detectCms() when the setting is unavailable.
+ * The RFC 822 Message-ID header, which is the same in every recipient's
+ * mailbox, so the email is only recorded once. Empty if the header is missing
  */
-function resolveCms(config) {
-  try {
-    var fromApi = mapUsersTableToCms(CiviCrmService.getUserFrameworkUsersTable(config));
-    if (fromApi) return fromApi;
-  } catch (e) {
-    // Setting not exposed or call failed — fall through to markup sniff.
-  }
-  return detectCms(config.baseUrl);
-}
-
-/** Maps CiviCRM's user table name to a CMS keyword, or null if inconclusive. */
-function mapUsersTableToCms(tableName) {
-  if (!tableName) return null;
-  var t = ('' + tableName).toLowerCase();
-  if (t.indexOf('#_') > -1) return 'joomla';                 // Joomla's #__ prefix placeholder
-  if (t === 'users_field_data' || t === 'users') return 'drupal'; // Drupal 8+/7 & Backdrop — same URL form
-  if (t.indexOf('wp_') === 0 || /_users$/.test(t)) return 'wordpress'; // prefixed users table
-  return null;
-}
-
-/** Builds a link to the contact's summary screen, per the org's CMS. */
-function buildContactViewUrl(baseUrl, cms, contactId) {
-  var base = baseUrl.replace(/\/$/, '');
-  switch (cms) {
-    case 'wordpress':
-      return base + '/wp-admin/admin.php?page=CiviCRM&q=civicrm/contact/view&reset=1&cid=' + contactId;
-    case 'joomla':
-      return base + '/administrator/index.php?option=com_civicrm&task=civicrm/contact/view&reset=1&cid=' + contactId;
-    case 'drupal':
-    case 'backdrop':
-    case 'standalone':
-    default:
-      // Clean-URL form used by Drupal, Backdrop, Standalone (and clean-URL WordPress).
-      return base + '/civicrm/contact/view?reset=1&cid=' + contactId;
-  }
+function getRfcMessageId(message) {
+  return (message.getHeader('Message-ID') || message.getHeader('Message-Id') || '').trim();
 }
 
 /**
- * Best-effort CMS detection by inspecting the site root's headers and markup.
- * Returns one of: drupal | wordpress | joomla | backdrop | standalone.
- * Falls back to 'drupal' (the clean-URL form) when signals are inconclusive.
+ * Splits a comma-separated address header (To/Cc/Bcc) into its addresses,
+ * e.g. ['Jane Doe <jane@doe.com>', 'john@x.org'], splitting only on commas
+ * that sit outside quotes and angle brackets so display names with commas
+ * survive.
  */
-function detectCms(baseUrl) {
-  try {
-    var resp = UrlFetchApp.fetch(baseUrl, { muteHttpExceptions: true, followRedirects: true });
-    var headers = resp.getAllHeaders();
-    var generator = ((headers['X-Generator'] || headers['x-generator'] || '') + '').toLowerCase();
-    var body = resp.getContentText().substring(0, 8000).toLowerCase();
-
-    if (generator.indexOf('backdrop') > -1 || body.indexOf('/core/misc/backdrop.js') > -1) return 'backdrop';
-    if (generator.indexOf('drupal') > -1 || body.indexOf('/sites/default/files') > -1 || body.indexOf('drupal.settings') > -1) return 'drupal';
-    if (body.indexOf('wp-content') > -1 || body.indexOf('wp-includes') > -1) return 'wordpress';
-    if (generator.indexOf('joomla') > -1 || body.indexOf('/media/jui/') > -1) return 'joomla';
-  } catch (e) {
-    // Network/permission issue — fall through to default.
-  }
-  return 'drupal';
-}
-
-/** Splits a "First Last <email>" header into {firstName, lastName}. */
-function parseSenderName(fromHeader) {
-  var lt = fromHeader.indexOf('<');
-  var namePart = lt > -1 ? fromHeader.substring(0, lt) : '';
-  // A bare address with no display name yields no name.
-  if (lt === -1 && fromHeader.indexOf('@') === -1) {
-    namePart = fromHeader;
-  }
-  return splitName(namePart);
-}
-
-/** Turns a display-name string into {firstName, lastName}. */
-function splitName(namePart) {
-  namePart = (namePart || '').replace(/["']/g, '').trim();
-  if (!namePart) {
-    return { firstName: '', lastName: '' };
-  }
-  var parts = namePart.split(/\s+/);
-  return { firstName: parts.shift(), lastName: parts.join(' ') };
-}
-
-/**
- * Parses a comma-separated address header (To/Cc/Bcc) into
- * [{email, firstName, lastName}], splitting only on commas that sit
- * outside quotes and angle brackets so display names with commas survive.
- */
-function parseAddressList(headerString) {
+function splitAddressHeader(headerString) {
   if (!headerString) return [];
   var parts = [];
   var current = '';
@@ -142,18 +68,24 @@ function parseAddressList(headerString) {
       current += ch;
     }
   }
-  if (current.trim()) parts.push(current);
+  parts.push(current);
 
-  var out = [];
-  for (var j = 0; j < parts.length; j++) {
-    var entry = parts[j].trim();
-    if (!entry) continue;
-    var email = extractEmailAddress(entry);
-    if (!email || email.indexOf('@') === -1) continue;
-    var name = parseSenderName(entry);
-    out.push({ email: email, firstName: name.firstName, lastName: name.lastName });
-  }
-  return out;
+  return parts
+    .map(function (p) { return p.trim(); })
+    .filter(function (p) { return p && extractEmailAddress(p).indexOf('@') > -1; });
+}
+
+/**
+ * Parses an address header into [{address, email, name}], where address is
+ * the original entry (sent to CiviCRM, which parses the name itself) and
+ * name is only for display.
+ */
+function parseAddressList(headerString) {
+  return splitAddressHeader(headerString).map(function (address) {
+    var lt = address.indexOf('<');
+    var name = lt > -1 ? address.substring(0, lt).replace(/"/g, '').trim() : '';
+    return { address: address, email: extractEmailAddress(address), name: name };
+  });
 }
 
 /** Everyone on the message (From + To/Cc/Bcc), deduped, minus the active user. */
@@ -192,19 +124,24 @@ function messageSnippet(message, maxLen) {
     .replace(/\s+/g, ' ')
     .trim();
   if (text.length > maxLen) {
-    text = text.substring(0, maxLen).trim() + '\u2026';
+    text = text.substring(0, maxLen).trim() + '…';
   }
   return text;
 }
 
-/** Union of two ID lists, de-duplicated by string value. */
-function mergeIds(a, b) {
-  var out = [], seen = {};
-  a.concat(b).forEach(function (id) {
-    var k = String(id);
-    if (!seen[k]) { seen[k] = true; out.push(id); }
-  });
-  return out;
+/**
+ * Escapes the plain-text body for CiviCRM's HTML activity details, keeping
+ * line breaks. 
+ */
+function plainTextToHtml(text) {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+    .replace(/\r\n?/g, '\n')
+    .replace(/\n/g, '<br />\n');
 }
 
 /**
@@ -216,12 +153,6 @@ function readCurrentMessage(e, fallbackId) {
   GmailApp.setCurrentMessageAccessToken(e.gmail.accessToken);
   var id = (e.gmail && e.gmail.messageId) ? e.gmail.messageId : fallbackId;
   return GmailApp.getMessageById(id);
-}
-
-/** Returns list with any entry equal (by string) to id removed. */
-function removeId(list, id) {
-  var target = String(id);
-  return list.filter(function (x) { return String(x) !== target; });
 }
 
 /** Pulls the domain portion of the active user's email (used as the config key). */
