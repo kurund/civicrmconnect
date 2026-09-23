@@ -18,7 +18,16 @@ var CiviCrmService = (function () {
       payload: payload,
       muteHttpExceptions: true
     };
-    var response = UrlFetchApp.fetch(url, options);
+    var response;
+    try {
+      response = UrlFetchApp.fetch(url, options);
+    } catch (e) {
+      // Only addresses in the manifest's urlFetchWhitelist can be reached.
+      if (/whitelisted/.test(e.message)) {
+        throw new Error('CiviCRM Connect doesn\'t support CiviCRM sites at ' + config.baseUrl + ' yet. Please contact support.');
+      }
+      throw e;
+    }
     var code = response.getResponseCode();
     if (code === 401 || code === 403) {
       throw new Error('Could not authenticate with CiviCRM (' + code + '). Check the API key.');

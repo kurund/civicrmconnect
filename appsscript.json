@@ -7,18 +7,40 @@
     "https://www.googleapis.com/auth/gmail.addons.execute",
     "https://www.googleapis.com/auth/gmail.addons.current.message.readonly",
     "https://www.googleapis.com/auth/script.external_request",
+    "https://www.googleapis.com/auth/script.locale",
     "https://www.googleapis.com/auth/userinfo.email"
+  ],
+  "urlFetchWhitelist": [
+    "https://*.org/",
+    "https://*.com/",
+    "https://*.net/",
+    "https://*.uk/",
+    "https://*.ie/",
+    "https://*.eu/",
+    "https://*.coop/",
+    "https://*.ngo/",
+    "https://*.io/"
   ],
   "addOns": {
     "common": {
       "name": "CiviCRM Connect",
-      "logoUrl": "https://civicrm.org/sites/civicrm.org/files/civicrm.png",
+      "logoUrl": "https://raw.githubusercontent.com/kurund/civicrmconnect/main/assets/icon-128.png",
       "layoutProperties": {
         "primaryColor": "#1a73e8"
       },
+      "useLocaleFromApp": true,
       "homepageTrigger": {
         "runFunction": "onHomepage"
-      }
+      },
+      "universalActions": [
+        {
+          "label": "Settings",
+          "runFunction": "onSettings"
+        }
+      ],
+      "openLinkUrlPrefixes": [
+        "*"
+      ]
     },
     "gmail": {
       "contextualTriggers": [

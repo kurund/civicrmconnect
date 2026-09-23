@@ -1,5 +1,10 @@
 /**
- * Admin settings, domain-keyed config storage, and the cards shown to users.
+ * Organisation settings, domain-keyed config storage, and the cards shown to
+ * users.
+ *
+ * Each Google Workspace domain has one config: the CiviCRM URL and API key,
+ * and the admins who may change them. Whoever first saves a working URL and
+ * key becomes an admin; admins can add others from the same domain.
  */
 
 function getDomainConfig(domain) {
@@ -16,39 +21,126 @@ function saveDomainConfig(domain, config) {
   PropertiesService.getScriptProperties().setProperty('config_' + domain, JSON.stringify(config));
 }
 
-function buildSettingsCard(message) {
+/**
+ * Whether the active user may change the organisation's settings: anyone
+ * while nothing is saved (or for configs saved before admins existed),
+ * otherwise only the listed admins.
+ */
+function canManage(config) {
+  return !config || !config.admins || config.admins.indexOf(getUserEmail()) > -1;
+}
+
+/** Settings form for admins, or a read-only summary for everyone else. */
+function buildSettingsCard(message, config) {
   var section = CardService.newCardSection();
   if (message) {
     section.addWidget(CardService.newTextParagraph().setText(message));
   }
+
+  if (!canManage(config)) {
+    section.addWidget(CardService.newTextParagraph().setText('Connected to ' + config.baseUrl));
+    section.addWidget(CardService.newTextParagraph().setText(
+      'Managed by ' + config.admins.join(', ') + '. Ask one of them to change these settings.'));
+    return CardService.newCardBuilder()
+      .setHeader(CardService.newCardHeader().setTitle('CiviCRM Connect settings'))
+      .addSection(section)
+      .build();
+  }
+
   section.addWidget(CardService.newTextParagraph().setText(
     'Copy the Site URL and API key from CiviCRM: Administer » System Settings » Gmail Connect Settings.'));
-  section.addWidget(CardService.newTextInput().setFieldName('baseUrl').setTitle('CiviCRM Site URL').setHint('https://yourorg.org'));
-  section.addWidget(CardService.newTextInput().setFieldName('apiKey').setTitle('API Key'));
+  section.addWidget(CardService.newTextInput()
+    .setFieldName('baseUrl')
+    .setTitle('CiviCRM Site URL')
+    .setHint('https://yourorg.org')
+    .setValue(config ? config.baseUrl : ''));
+  section.addWidget(CardService.newTextInput()
+    .setFieldName('apiKey')
+    .setTitle('API Key')
+    .setHint(config ? 'Leave blank to keep the current key' : ''));
+  section.addWidget(CardService.newTextInput()
+    .setFieldName('admins')
+    .setTitle('Admins')
+    .setHint('@' + getUserDomain() + ' addresses that can change these settings, one per line')
+    .setMultiline(true)
+    .setValue(config && config.admins ? config.admins.join('\n') : getUserEmail()));
+  if (config && config.updatedBy) {
+    section.addWidget(CardService.newTextParagraph().setText(
+      'Last changed by ' + config.updatedBy + ' on ' + config.updatedAt.substring(0, 10) + '.'));
+  }
   section.addWidget(CardService.newTextButton()
     .setText('Save & Test Connection')
     .setOnClickAction(CardService.newAction().setFunctionName('handleSaveSettings')));
 
   return CardService.newCardBuilder()
-    .setHeader(CardService.newCardHeader().setTitle('Connect your CiviCRM'))
+    .setHeader(CardService.newCardHeader().setTitle(config ? 'CiviCRM Connect settings' : 'Connect your CiviCRM'))
     .addSection(section)
     .build();
 }
 
+/**
+ * Tests and saves the organisation's settings. The user saving is always kept
+ * as an admin, and all admins must be from the same domain. On failure only a
+ * notification is shown, so the form keeps what was typed.
+ */
 function handleSaveSettings(e) {
-  var config = {
-    baseUrl: (e.formInput.baseUrl || '').trim(),
-    apiKey: (e.formInput.apiKey || '').trim()
-  };
-
-  try {
-    CiviCrmService.testConnection(config);
-  } catch (err) {
-    var text = 'Connection failed: ' + err.message;
-    return actionResponse(text, buildSettingsCard(text));
+  if (isPersonalAccount()) {
+    return actionResponse('CiviCRM Connect needs a Google Workspace account.');
   }
-  saveDomainConfig(getUserDomain(), config);
-  return actionResponse('Connected! Open any email to look up its contacts.', buildHomepageCard(config));
+  var domain = getUserDomain();
+  var me = getUserEmail();
+  var input = e.formInput;
+
+  var lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    var current = getDomainConfig(domain);
+    if (!canManage(current)) {
+      return actionResponse('Only your organisation\'s CiviCRM Connect admins can change these settings.',
+        buildSettingsCard(null, current));
+    }
+
+    var admins = (input.admins || '').split(/[\s,;]+/)
+      .map(function (a) { return a.trim().toLowerCase(); })
+      .filter(function (a, i, all) { return a && all.indexOf(a) === i; });
+    if (admins.indexOf(me) === -1) {
+      admins.unshift(me);
+    }
+    var config = {
+      baseUrl: (input.baseUrl || '').trim().replace(/\/+$/, ''),
+      apiKey: (input.apiKey || '').trim() || (current ? current.apiKey : ''),
+      admins: admins,
+      updatedBy: me,
+      updatedAt: new Date().toISOString()
+    };
+
+    try {
+      var outsiders = admins.filter(function (a) { return !/@/.test(a) || a.split('@')[1] !== domain; });
+      if (outsiders.length) {
+        throw new Error('Admins must be @' + domain + ' addresses: ' + outsiders.join(', '));
+      }
+      if (config.baseUrl.indexOf('https://') !== 0) {
+        throw new Error('The Site URL must start with https://');
+      }
+      CiviCrmService.testConnection(config);
+    } catch (err) {
+      return actionResponse('Not saved: ' + err.message);
+    }
+
+    saveDomainConfig(domain, config);
+    return actionResponse('Saved. Open any email to look up its contacts.', buildHomepageCard(config));
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function buildPersonalAccountCard() {
+  var section = CardService.newCardSection().addWidget(CardService.newTextParagraph().setText(
+    'CiviCRM Connect needs a Google Workspace account. Personal Gmail accounts aren\'t supported.'));
+  return CardService.newCardBuilder()
+    .setHeader(CardService.newCardHeader().setTitle('CiviCRM Connect'))
+    .addSection(section)
+    .build();
 }
 
 /** Action response with a notification, optionally replacing the current card. */
@@ -63,8 +155,11 @@ function actionResponse(text, card) {
 
 function buildHomepageCard(config) {
   var section = CardService.newCardSection()
-    .addWidget(CardService.newTextParagraph().setText('Connected to ' + config.baseUrl))
-    .addWidget(CardService.newTextParagraph().setText('Open an email to see its contacts in CiviCRM.'));
+    .addWidget(CardService.newTextParagraph().setText('Connected to ' + config.baseUrl));
+  if (config.admins) {
+    section.addWidget(CardService.newTextParagraph().setText('Managed by ' + config.admins.join(', ')));
+  }
+  section.addWidget(CardService.newTextParagraph().setText('Open an email to see its contacts in CiviCRM.'));
 
   return CardService.newCardBuilder()
     .setHeader(CardService.newCardHeader().setTitle('CiviCRM Connect'))
@@ -99,7 +194,7 @@ function buildContactCard(config, msgInfo) {
         .setOpenLink(CardService.newOpenLink().setUrl(found.activity.url))));
   } else if (!msgInfo.rfcMessageId) {
     msgSection.addWidget(CardService.newTextParagraph()
-      .setText('This email has no Message-ID header, so it can\'t be recorded.'));
+      .setText('This email has no Message-ID header, so it cannot be recorded.'));
   } else {
     msgSection.addWidget(CardService.newTextButton()
       .setText('Record this email')
@@ -160,7 +255,7 @@ function handleAddContact(e) {
   var text = contact.created
     ? 'Added ' + p.email + ' to CiviCRM.'
     : p.email + ' already exists in CiviCRM.';
-  return actionResponse(text, buildContactCard(config, buildMsgInfo(readCurrentMessage(e))));
+  return actionResponse(text, buildContactCard(config, buildMsgInfo(readCurrentMessage(e), getTimeZone(e))));
 }
 
 /**
@@ -191,5 +286,5 @@ function handleRecordActivity(e) {
     ? 'Email recorded in CiviCRM.'
     : 'This email was already recorded in CiviCRM.';
   // Refresh so the card shows the recorded state and any new contacts.
-  return actionResponse(text, buildContactCard(config, buildMsgInfo(message)));
+  return actionResponse(text, buildContactCard(config, buildMsgInfo(message, getTimeZone(e))));
 }

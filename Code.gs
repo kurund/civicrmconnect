@@ -4,30 +4,39 @@
  */
 
 function onHomepage(e) {
-  var config = getConfig();
-  if (!config) {
-    return buildSettingsCard(null);
+  if (isPersonalAccount()) {
+    return buildPersonalAccountCard();
   }
-  return buildHomepageCard(config);
+  var config = getConfig();
+  return config ? buildHomepageCard(config) : buildSettingsCard(null, null);
 }
 
 function onGmailMessageOpen(e) {
+  if (isPersonalAccount()) {
+    return buildPersonalAccountCard();
+  }
   var config = getConfig();
   if (!config) {
-    return buildSettingsCard('Ask your Workspace admin to connect your organization\'s CiviCRM first.');
+    return buildSettingsCard('Your organisation has not connected CiviCRM yet. A CiviCRM admin can connect it here.', null);
   }
 
   var message = readCurrentMessage(e);
-  return buildContactCard(config, buildMsgInfo(message));
+  return buildContactCard(config, buildMsgInfo(message, getTimeZone(e)));
+}
+
+/** Universal action: the Settings entry in the add-on menu. */
+function onSettings(e) {
+  var card = isPersonalAccount() ? buildPersonalAccountCard() : buildSettingsCard(null, getConfig());
+  return CardService.newUniversalActionResponseBuilder().displayAddOnCards([card]).build();
 }
 
 /** Bundles the message fields the cards display, including its participants. */
-function buildMsgInfo(message) {
+function buildMsgInfo(message, timeZone) {
   return {
     rfcMessageId: getRfcMessageId(message),
     senderEmail: extractEmailAddress(message.getFrom()),
     toEmails: message.getTo(),
-    date: formatMessageDate(message.getDate()),
+    date: formatMessageDate(message.getDate(), timeZone),
     snippet: messageSnippet(message, 240),
     participants: collectParticipants(message)
   };
@@ -103,9 +112,15 @@ function collectParticipants(message) {
   return out;
 }
 
-/** Formats the message date in the script's timezone. */
-function formatMessageDate(date) {
-  return Utilities.formatDate(date, Session.getScriptTimeZone(), 'MMM d, yyyy h:mm a');
+/** Formats the message date in the given time zone. */
+function formatMessageDate(date, timeZone) {
+  return Utilities.formatDate(date, timeZone, 'MMM d, yyyy h:mm a');
+}
+
+/** The user's time zone from the event (needs useLocaleFromApp), else the script's. */
+function getTimeZone(e) {
+  var tz = e.commonEventObject && e.commonEventObject.timeZone;
+  return (tz && tz.id) || Session.getScriptTimeZone();
 }
 
 /** Start of the body with whitespace collapsed, truncated. */
@@ -139,10 +154,23 @@ function readCurrentMessage(e) {
   return GmailApp.getMessageById(e.gmail.messageId);
 }
 
+/** The active user's email address, lowercased. */
+function getUserEmail() {
+  return Session.getActiveUser().getEmail().toLowerCase();
+}
+
 /** Pulls the domain portion of the active user's email (used as the config key). */
 function getUserDomain() {
-  var email = Session.getActiveUser().getEmail();
-  return email.substring(email.indexOf('@') + 1).toLowerCase();
+  var email = getUserEmail();
+  return email.substring(email.indexOf('@') + 1);
+}
+
+/**
+ * Settings are shared per organisation domain, so personal Gmail accounts
+ * (which all share one domain) aren't supported.
+ */
+function isPersonalAccount() {
+  return ['gmail.com', 'googlemail.com'].indexOf(getUserDomain()) > -1;
 }
 
 /** Extracts a bare email address out of a "Name <email@x.com>" header string. */
