@@ -42,7 +42,7 @@ function buildSettingsCard(message, config) {
     section.addWidget(CardService.newTextParagraph().setText(
       'Managed by ' + config.admins.join(', ') + '. Ask one of them to change these settings.'));
     return CardService.newCardBuilder()
-      .setHeader(CardService.newCardHeader().setTitle('CiviCRM Connect settings'))
+      .setHeader(CardService.newCardHeader().setTitle('Settings'))
       .addSection(section)
       .build();
   }
@@ -73,7 +73,7 @@ function buildSettingsCard(message, config) {
     .setOnClickAction(CardService.newAction().setFunctionName('handleSaveSettings')));
 
   return CardService.newCardBuilder()
-    .setHeader(CardService.newCardHeader().setTitle(config ? 'CiviCRM Connect settings' : 'Connect your CiviCRM'))
+    .setHeader(CardService.newCardHeader().setTitle(config ? 'Settings' : 'Connect your CiviCRM'))
     .addSection(section)
     .build();
 }
@@ -138,7 +138,6 @@ function buildPersonalAccountCard() {
   var section = CardService.newCardSection().addWidget(CardService.newTextParagraph().setText(
     'CiviCRM Connect needs a Google Workspace account. Personal Gmail accounts aren\'t supported.'));
   return CardService.newCardBuilder()
-    .setHeader(CardService.newCardHeader().setTitle('CiviCRM Connect'))
     .addSection(section)
     .build();
 }
@@ -162,7 +161,6 @@ function buildHomepageCard(config) {
   section.addWidget(CardService.newTextParagraph().setText('Open an email to see its contacts in CiviCRM.'));
 
   return CardService.newCardBuilder()
-    .setHeader(CardService.newCardHeader().setTitle('CiviCRM Connect'))
     .addSection(section)
     .build();
 }
@@ -205,7 +203,6 @@ function buildContactCard(config, msgInfo) {
   var contactsSection = buildContactsSection(participants, found.contacts);
 
   return CardService.newCardBuilder()
-    .setHeader(CardService.newCardHeader().setTitle('CiviCRM Connect'))
     .addSection(msgSection)
     .addSection(contactsSection)
     .build();
