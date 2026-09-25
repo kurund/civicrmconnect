@@ -1,92 +1,56 @@
 /**
- * Thin wrapper around the Gmail Connect CiviCRM extension's APIv4 endpoints,
- * authenticated via AuthX (X-Civi-Auth: Bearer <api_key>). The site URL and
- * API key are shown at Administer » System Settings » Gmail Connect Settings.
+ * Thin wrapper around the Gmail Connect CiviCRM extension's endpoint.
+ * Each user connects with their personal URL from CiviCRM (Contacts >> Gmail
+ * Connect)
  */
 var CiviCrmService = (function () {
 
-  /** POSTs to /civicrm/ajax/api4<path> and returns the decoded response. */
-  function post(config, path, payload) {
-    var url = config.baseUrl.replace(/\/$/, '') + '/civicrm/ajax/api4' + path;
+  /** POSTs {action, params} to the user's endpoint and returns the values. */
+  function call(config, action, params) {
     var options = {
       method: 'post',
-      contentType: 'application/x-www-form-urlencoded',
-      headers: {
-        'X-Civi-Auth': 'Bearer ' + config.apiKey,
-        'X-Requested-With': 'XMLHttpRequest'
-      },
-      payload: payload,
+      contentType: 'application/json',
+      headers: { 'X-Gmail-Connect-Token': config.token },
+      payload: JSON.stringify({ action: action, params: params }),
       muteHttpExceptions: true
     };
     var response;
     try {
-      response = UrlFetchApp.fetch(url, options);
+      response = UrlFetchApp.fetch(config.url, options);
     } catch (e) {
       // Only addresses in the manifest's urlFetchWhitelist can be reached.
       if (/whitelisted/.test(e.message)) {
-        throw new Error('CiviCRM Connect doesn\'t support CiviCRM sites at ' + config.baseUrl + ' yet. Please contact support.');
+        throw new Error('CiviCRM Connect doesn\'t support CiviCRM sites at ' + siteOf(config.url) + ' yet. Please contact support.');
       }
       throw e;
     }
     var code = response.getResponseCode();
-    if (code === 401 || code === 403) {
-      throw new Error('Could not authenticate with CiviCRM (' + code + '). Check the API key.');
+    if (code === 401) {
+      throw new Error('This URL no longer works. Copy it again from CiviCRM: Contacts » Gmail Connect.');
+    }
+    if (code === 403) {
+      throw new Error('Your CiviCRM user does not have permission to use Gmail Connect.');
     }
     var body;
     try {
       body = JSON.parse(response.getContentText());
     } catch (e) {
-      throw new Error('CiviCRM returned an unexpected response (' + code + '). Check the CiviCRM URL.');
+      throw new Error('CiviCRM returned an unexpected response (' + code + '). Check the URL.');
     }
     if (code !== 200) {
-      throw new Error('CiviCRM API error (' + code + '): ' + (body.error_message || response.getContentText()));
+      throw new Error(body.error || 'CiviCRM error (' + code + ').');
     }
-    return body;
-  }
-
-  /** Calls a single GmailConnect action and returns its values. */
-  function callApi(config, action, params) {
-    var body = post(config, '/GmailConnect/' + action, { params: JSON.stringify(params) });
-    return body.values || [];
-  }
-
-  /** Checks the key is valid and the Gmail Connect endpoints are available. */
-  function testConnection(config) {
-    callApi(config, 'getActions', {});
+    return body.values;
   }
 
   /**
-   * Looks up, in one request, whether the email is already recorded and which
-   * of the emails belong to contacts
-   * Returns {activity: {id, url} | null, contacts: {lowercased email: {id, display_name, url}}}.
+   * Whether the email is already recorded, which of the emails belong to
+   * contacts, and who the user is connected as.
+   * Returns {activity: {id, url} | null, contacts: {lowercased email: {id, display_name, url}},
+   * user: {id, display_name}}.
    */
   function lookup(config, rfcMessageId, emails) {
-    var calls = {};
-    if (rfcMessageId) {
-      calls.activity = ['GmailConnect', 'getActivity', { messageId: rfcMessageId }];
-    }
-    emails.forEach(function (email, i) {
-      calls['contact' + i] = ['GmailConnect', 'getContact', { email: email }];
-    });
-    if (!Object.keys(calls).length) {
-      return { activity: null, contacts: {} };
-    }
-
-    var body = post(config, '', { calls: JSON.stringify(calls) });
-    Object.keys(calls).forEach(function (key) {
-      if (body[key].error_message) {
-        throw new Error('CiviCRM API error: ' + body[key].error_message);
-      }
-    });
-    var contacts = {};
-    emails.forEach(function (email, i) {
-      var values = body['contact' + i].values;
-      if (values.length) contacts[email.toLowerCase()] = values[0];
-    });
-    return {
-      activity: (body.activity && body.activity.values.length) ? body.activity.values[0] : null,
-      contacts: contacts
-    };
+    return call(config, 'lookup', { messageId: rfcMessageId, emails: emails })[0];
   }
 
   /**
@@ -94,7 +58,7 @@ var CiviCrmService = (function () {
    * the existing one. Returns {id, created}
    */
   function addContact(config, address) {
-    return callApi(config, 'addContact', { email: address })[0];
+    return call(config, 'addContact', { email: address })[0];
   }
 
   /**
@@ -103,11 +67,10 @@ var CiviCrmService = (function () {
    * messageId. Returns {id, url, created}
    */
   function recordActivity(config, fields) {
-    return callApi(config, 'recordActivity', fields)[0];
+    return call(config, 'recordActivity', fields)[0];
   }
 
   return {
-    testConnection: testConnection,
     lookup: lookup,
     addContact: addContact,
     recordActivity: recordActivity

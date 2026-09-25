@@ -4,20 +4,14 @@
  */
 
 function onHomepage(e) {
-  if (isPersonalAccount()) {
-    return buildPersonalAccountCard();
-  }
   var config = getConfig();
-  return config ? buildHomepageCard(config) : buildSettingsCard(null, null);
+  return config ? buildHomepageCard(config) : buildSettingsCard(null);
 }
 
 function onGmailMessageOpen(e) {
-  if (isPersonalAccount()) {
-    return buildPersonalAccountCard();
-  }
   var config = getConfig();
   if (!config) {
-    return buildSettingsCard('Your organisation has not connected CiviCRM yet. A CiviCRM admin can connect it here.', null);
+    return buildSettingsCard('Connect CiviCRM Connect to your CiviCRM to look up the people on your emails.');
   }
 
   var message = readCurrentMessage(e);
@@ -26,8 +20,7 @@ function onGmailMessageOpen(e) {
 
 /** Universal action: the Settings entry in the add-on menu. */
 function onSettings(e) {
-  var card = isPersonalAccount() ? buildPersonalAccountCard() : buildSettingsCard(null, getConfig());
-  return CardService.newUniversalActionResponseBuilder().displayAddOnCards([card]).build();
+  return CardService.newUniversalActionResponseBuilder().displayAddOnCards([buildSettingsCard(null)]).build();
 }
 
 /** Bundles the message fields the cards display, including its participants. */
@@ -157,20 +150,6 @@ function readCurrentMessage(e) {
 /** The active user's email address, lowercased. */
 function getUserEmail() {
   return Session.getActiveUser().getEmail().toLowerCase();
-}
-
-/** Pulls the domain portion of the active user's email (used as the config key). */
-function getUserDomain() {
-  var email = getUserEmail();
-  return email.substring(email.indexOf('@') + 1);
-}
-
-/**
- * Settings are shared per organisation domain, so personal Gmail accounts
- * (which all share one domain) aren't supported.
- */
-function isPersonalAccount() {
-  return ['gmail.com', 'googlemail.com'].indexOf(getUserDomain()) > -1;
 }
 
 /** Extracts a bare email address out of a "Name <email@x.com>" header string. */

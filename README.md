@@ -10,37 +10,26 @@ CiviCRM addon for gmail
 
 ### Requirements
 
-The CiviCRM site needs the Gmail Connect CiviCRM extension (`gmailconnect`).
-On install it creates a user with an API key and the endpoints this
-add-on uses.
+The CiviCRM site needs the Gmail Connect CiviCRM extension (`gmailconnect`),
+which provides the endpoint this add-on calls. Each user needs a CiviCRM login
+with the `access Gmail Connect endpoints` permission.
 
 ### Setup
 
-CiviCRM Connect is set up once per organisation (Google Workspace domain).
-Personal Gmail accounts aren't supported.
+Each user connects once with their own URL:
 
-1. In CiviCRM go to **Administer » System Settings » Gmail Connect Settings**
-   and copy the Site URL and API key.
-2. Open the add-on in Gmail and enter them on the "Connect your CiviCRM" card.
-   The Site URL must use `https://`.
+1. In CiviCRM go to **Contacts >> Gmail Connect** and copy your personal URL.
+2. Open the add-on in Gmail and paste it on the "Connect your CiviCRM" card
+   (or under **Settings** in the add-on's menu). The URL must use `https://`.
 
-Whoever saves the first working URL and key becomes the organisation's admin
-and can add other admins (addresses in the same domain) under **Settings** in
-the add-on's menu. Everyone else in the organisation can use the add-on
-straight away; they see which CiviCRM it's connected to and who manages it.
+The add-on then shows which CiviCRM site you're connected to and as whom.
+Actions in CiviCRM are carried out as you. **Disconnect** under Settings
+removes your URL from the add-on; regenerating the URL in CiviCRM stops the
+old one working.
 
 The add-on can only reach CiviCRM sites whose address ends in one of the
 domains in `urlFetchWhitelist` in `appsscript.json` (`.org`, `.com`, `.net`,
 `.uk`, `.ie`, `.eu`, `.coop`, `.ngo`, `.io`).
-
-### Data
-
-- Each organisation's CiviCRM URL, API key and admin list are stored in the
-  add-on's script properties, in the publisher's Google Apps Script project.
-- When an email is opened, the participants' email addresses and the email's
-  `Message-ID` are sent to the organisation's CiviCRM to look up contacts.
-- When an email is recorded, its subject, plain-text body, addresses and
-  `Message-ID` are sent to the organisation's CiviCRM.
 
 ### Recording
 

@@ -1,76 +1,66 @@
 /**
- * Organisation settings, domain-keyed config storage, and the cards shown to
- * users.
+ * Per-user settings and the cards shown to users
  *
- * Each Google Workspace domain has one config: the CiviCRM URL and API key,
- * and the admins who may change them. Whoever first saves a working URL and
- * key becomes an admin; admins can add others from the same domain.
+ * Each user connects with their personal Gmail Connect URL from CiviCRM.
  */
 
-function getDomainConfig(domain) {
-  var raw = PropertiesService.getScriptProperties().getProperty('config_' + domain);
+var CONFIG_KEY = 'civicrm';
+
+/** The active user's connection {url, token, site, user}, or null if not connected. */
+function getConfig() {
+  var raw = PropertiesService.getUserProperties().getProperty(CONFIG_KEY);
   return raw ? JSON.parse(raw) : null;
 }
 
-/** Config for the active user's domain, or null if not connected yet. */
-function getConfig() {
-  return getDomainConfig(getUserDomain());
-}
-
-function saveDomainConfig(domain, config) {
-  PropertiesService.getScriptProperties().setProperty('config_' + domain, JSON.stringify(config));
+function saveConfig(config) {
+  PropertiesService.getUserProperties().setProperty(CONFIG_KEY, JSON.stringify(config));
 }
 
 /**
- * Whether the active user may change the organisation's settings: anyone
- * while nothing is saved (or for configs saved before admins existed),
- * otherwise only the listed admins.
+ * Splits a pasted Gmail Connect URL into the endpoint URL and its token.
  */
-function canManage(config) {
-  return !config || !config.admins || config.admins.indexOf(getUserEmail()) > -1;
+function parseEndpointUrl(text) {
+  var input = (text || '').trim();
+  var match = input.match(/[?&]token=([A-Za-z0-9]+)/);
+  if (input.indexOf('https://') !== 0 || !match) {
+    throw new Error('Paste the full URL from CiviCRM (Contacts » Gmail Connect). It starts with https:// and contains token=.');
+  }
+  var url = input.replace(/([?&])token=[A-Za-z0-9]+&?/, '$1').replace(/[?&]$/, '');
+  return { url: url, token: match[1] };
 }
 
-/** Settings form for admins, or a read-only summary for everyone else. */
-function buildSettingsCard(message, config) {
+/** "https://example.org" from any URL on that site. */
+function siteOf(url) {
+  return url.match(/^https:\/\/[^\/?#]+/)[0];
+}
+
+/** Connected as …, or the steps to connect; paste a URL to (re)connect. */
+function buildSettingsCard(message) {
+  var config = getConfig();
   var section = CardService.newCardSection();
   if (message) {
     section.addWidget(CardService.newTextParagraph().setText(message));
   }
-
-  if (!canManage(config)) {
-    section.addWidget(CardService.newTextParagraph().setText('Connected to ' + config.baseUrl));
-    section.addWidget(CardService.newTextParagraph().setText(
-      'Managed by ' + config.admins.join(', ') + '. Ask one of them to change these settings.'));
-    return CardService.newCardBuilder()
-      .setHeader(CardService.newCardHeader().setTitle('Settings'))
-      .addSection(section)
-      .build();
+  if (config) {
+    section.addWidget(CardService.newTextParagraph().setText(connectedText(config)));
   }
-
   section.addWidget(CardService.newTextParagraph().setText(
-    'Copy the Site URL and API key from CiviCRM: Administer » System Settings » Gmail Connect Settings.'));
+    'Copy your personal URL from CiviCRM: Contacts » Gmail Connect.' +
+    (config ? ' Paste a new URL to replace the current one.' : '')));
   section.addWidget(CardService.newTextInput()
-    .setFieldName('baseUrl')
-    .setTitle('CiviCRM Site URL')
-    .setHint('https://yourorg.org')
-    .setValue(config ? config.baseUrl : ''));
-  section.addWidget(CardService.newTextInput()
-    .setFieldName('apiKey')
-    .setTitle('API Key')
-    .setHint(config ? 'Leave blank to keep the current key' : ''));
-  section.addWidget(CardService.newTextInput()
-    .setFieldName('admins')
-    .setTitle('Admins')
-    .setHint('@' + getUserDomain() + ' addresses that can change these settings, one per line')
-    .setMultiline(true)
-    .setValue(config && config.admins ? config.admins.join('\n') : getUserEmail()));
-  if (config && config.updatedBy) {
-    section.addWidget(CardService.newTextParagraph().setText(
-      'Last changed by ' + config.updatedBy + ' on ' + config.updatedAt.substring(0, 10) + '.'));
-  }
-  section.addWidget(CardService.newTextButton()
+    .setFieldName('url')
+    .setTitle('Your Gmail Connect URL')
+    .setHint('https://…/civicrm/gmailconnect?token=…'));
+
+  var buttons = CardService.newButtonSet().addButton(CardService.newTextButton()
     .setText('Save & Test Connection')
     .setOnClickAction(CardService.newAction().setFunctionName('handleSaveSettings')));
+  if (config) {
+    buttons.addButton(CardService.newTextButton()
+      .setText('Disconnect')
+      .setOnClickAction(CardService.newAction().setFunctionName('handleDisconnect')));
+  }
+  section.addWidget(buttons);
 
   return CardService.newCardBuilder()
     .setHeader(CardService.newCardHeader().setTitle(config ? 'Settings' : 'Connect your CiviCRM'))
@@ -79,67 +69,31 @@ function buildSettingsCard(message, config) {
 }
 
 /**
- * Tests and saves the organisation's settings. The user saving is always kept
- * as an admin, and all admins must be from the same domain. On failure only a
+ * Tests the pasted URL and saves it for the active user. On failure only a
  * notification is shown, so the form keeps what was typed.
  */
 function handleSaveSettings(e) {
-  if (isPersonalAccount()) {
-    return actionResponse('CiviCRM Connect needs a Google Workspace account.');
-  }
-  var domain = getUserDomain();
-  var me = getUserEmail();
-  var input = e.formInput;
-
-  var lock = LockService.getScriptLock();
-  lock.waitLock(10000);
+  var config;
   try {
-    var current = getDomainConfig(domain);
-    if (!canManage(current)) {
-      return actionResponse('Only your organisation\'s CiviCRM Connect admins can change these settings.',
-        buildSettingsCard(null, current));
-    }
-
-    var admins = (input.admins || '').split(/[\s,;]+/)
-      .map(function (a) { return a.trim().toLowerCase(); })
-      .filter(function (a, i, all) { return a && all.indexOf(a) === i; });
-    if (admins.indexOf(me) === -1) {
-      admins.unshift(me);
-    }
-    var config = {
-      baseUrl: (input.baseUrl || '').trim().replace(/\/+$/, ''),
-      apiKey: (input.apiKey || '').trim() || (current ? current.apiKey : ''),
-      admins: admins,
-      updatedBy: me,
-      updatedAt: new Date().toISOString()
-    };
-
-    try {
-      var outsiders = admins.filter(function (a) { return !/@/.test(a) || a.split('@')[1] !== domain; });
-      if (outsiders.length) {
-        throw new Error('Admins must be @' + domain + ' addresses: ' + outsiders.join(', '));
-      }
-      if (config.baseUrl.indexOf('https://') !== 0) {
-        throw new Error('The Site URL must start with https://');
-      }
-      CiviCrmService.testConnection(config);
-    } catch (err) {
-      return actionResponse('Not saved: ' + err.message);
-    }
-
-    saveDomainConfig(domain, config);
-    return actionResponse('Saved. Open any email to look up its contacts.', buildHomepageCard(config));
-  } finally {
-    lock.releaseLock();
+    config = parseEndpointUrl(e.formInput.url);
+    var result = CiviCrmService.lookup(config, '', []);
+    config.site = siteOf(config.url);
+    config.user = result.user ? result.user.display_name : '';
+  } catch (err) {
+    return actionResponse('Not saved: ' + err.message);
   }
+  saveConfig(config);
+  return actionResponse(connectedText(config) + '. Open any email to look up its contacts.', buildHomepageCard(config));
 }
 
-function buildPersonalAccountCard() {
-  var section = CardService.newCardSection().addWidget(CardService.newTextParagraph().setText(
-    'CiviCRM Connect needs a Google Workspace account. Personal Gmail accounts aren\'t supported.'));
-  return CardService.newCardBuilder()
-    .addSection(section)
-    .build();
+function handleDisconnect(e) {
+  PropertiesService.getUserProperties().deleteProperty(CONFIG_KEY);
+  return actionResponse('Disconnected from CiviCRM.', buildSettingsCard(null));
+}
+
+/** "Connected to https://example.org as Jane Doe" */
+function connectedText(config) {
+  return 'Connected to ' + config.site + (config.user ? ' as ' + config.user : '');
 }
 
 /** Action response with a notification, optionally replacing the current card. */
@@ -154,11 +108,8 @@ function actionResponse(text, card) {
 
 function buildHomepageCard(config) {
   var section = CardService.newCardSection()
-    .addWidget(CardService.newTextParagraph().setText('Connected to ' + config.baseUrl));
-  if (config.admins) {
-    section.addWidget(CardService.newTextParagraph().setText('Managed by ' + config.admins.join(', ')));
-  }
-  section.addWidget(CardService.newTextParagraph().setText('Open an email to see its contacts in CiviCRM.'));
+    .addWidget(CardService.newTextParagraph().setText(connectedText(config)))
+    .addWidget(CardService.newTextParagraph().setText('Open an email to see its contacts in CiviCRM.'));
 
   return CardService.newCardBuilder()
     .addSection(section)
