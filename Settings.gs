@@ -1,12 +1,6 @@
-/**
- * Per-user settings and the cards shown to users
- *
- * Each user connects with their personal Gmail Connect URL from CiviCRM.
- */
-
 var CONFIG_KEY = 'civicrm';
 
-/** The active user's connection {url, token, site, user}, or null if not connected. */
+/** {url, token, site, user}, or null if not connected */
 function getConfig() {
   var raw = PropertiesService.getUserProperties().getProperty(CONFIG_KEY);
   return raw ? JSON.parse(raw) : null;
@@ -17,7 +11,8 @@ function saveConfig(config) {
 }
 
 /**
- * Splits a pasted Gmail Connect URL into the endpoint URL and its token.
+ * Accepts https://site/civicrm/gmailconnect?token=… and WordPress's
+ * https://site/civicrm/?civiwp=CiviCRM&q=civicrm%2Fgmailconnect&token=…
  */
 function parseEndpointUrl(text) {
   var input = (text || '').trim();
@@ -29,12 +24,10 @@ function parseEndpointUrl(text) {
   return { url: url, token: match[1] };
 }
 
-/** "https://example.org" from any URL on that site. */
 function siteOf(url) {
   return url.match(/^https:\/\/[^\/?#]+/)[0];
 }
 
-/** Connected as …, or the steps to connect; paste a URL to (re)connect. */
 function buildSettingsCard(message) {
   var config = getConfig();
   var section = CardService.newCardSection();
@@ -68,10 +61,6 @@ function buildSettingsCard(message) {
     .build();
 }
 
-/**
- * Tests the pasted URL and saves it for the active user. On failure only a
- * notification is shown, so the form keeps what was typed.
- */
 function handleSaveSettings(e) {
   var config;
   try {
@@ -91,12 +80,10 @@ function handleDisconnect(e) {
   return actionResponse('Disconnected from CiviCRM.', buildSettingsCard(null));
 }
 
-/** "Connected to https://example.org as Jane Doe" */
 function connectedText(config) {
   return 'Connected to ' + config.site + (config.user ? ' as ' + config.user : '');
 }
 
-/** Action response with a notification, optionally replacing the current card. */
 function actionResponse(text, card) {
   var response = CardService.newActionResponseBuilder()
     .setNotification(CardService.newNotification().setText(text));
@@ -116,7 +103,6 @@ function buildHomepageCard(config) {
     .build();
 }
 
-/** From/To/Date/Preview block. */
 function addMessageWidgets(section, msgInfo) {
   section.addWidget(CardService.newKeyValue().setTopLabel('From').setContent(msgInfo.senderEmail).setMultiline(true));
   if (msgInfo.toEmails) {
@@ -132,7 +118,6 @@ function buildContactCard(config, msgInfo) {
   var participants = msgInfo.participants;
   var found = CiviCrmService.lookup(config, msgInfo.rfcMessageId, participants.map(function (p) { return p.email; }));
 
-  // Top: message details + record action (or link to the existing activity).
   var msgSection = CardService.newCardSection().setHeader('Message');
   addMessageWidgets(msgSection, msgInfo);
   if (found.activity) {
@@ -150,7 +135,6 @@ function buildContactCard(config, msgInfo) {
       .setOnClickAction(CardService.newAction().setFunctionName('handleRecordActivity')));
   }
 
-  // Bottom: everyone on the message, each with a View or Add button.
   var contactsSection = buildContactsSection(participants, found.contacts);
 
   return CardService.newCardBuilder()
@@ -159,7 +143,6 @@ function buildContactCard(config, msgInfo) {
     .build();
 }
 
-/** Lists each participant with a View (exists) or Add (missing) button. */
 function buildContactsSection(participants, contacts) {
   var section = CardService.newCardSection().setHeader('Contacts');
   if (!participants.length) {
@@ -188,7 +171,6 @@ function buildContactsSection(participants, contacts) {
   return section;
 }
 
-/** Adds a single participant to CiviCRM, then refreshes the card. */
 function handleAddContact(e) {
   var config = getConfig();
   var p = e.parameters;
@@ -206,11 +188,6 @@ function handleAddContact(e) {
   return actionResponse(text, buildContactCard(config, buildMsgInfo(readCurrentMessage(e), getTimeZone(e))));
 }
 
-/**
- * Records the email in CiviCRM: the sender is the source contact and the
- * To/Cc/Bcc recipients are targets. CiviCRM creates any missing contacts and
- * returns the existing activity if the email was already recorded.
- */
 function handleRecordActivity(e) {
   var config = getConfig();
   var message = readCurrentMessage(e);
@@ -233,6 +210,5 @@ function handleRecordActivity(e) {
   var text = activity.created
     ? 'Email recorded in CiviCRM.'
     : 'This email was already recorded in CiviCRM.';
-  // Refresh so the card shows the recorded state and any new contacts.
   return actionResponse(text, buildContactCard(config, buildMsgInfo(message, getTimeZone(e))));
 }

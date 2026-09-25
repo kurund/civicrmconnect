@@ -1,8 +1,3 @@
-/**
- * CiviCRM Connect - Gmail Add-on
- * Entry points for the homepage and contextual (message-open) triggers.
- */
-
 function onHomepage(e) {
   var config = getConfig();
   return config ? buildHomepageCard(config) : buildSettingsCard(null);
@@ -18,12 +13,10 @@ function onGmailMessageOpen(e) {
   return buildContactCard(config, buildMsgInfo(message, getTimeZone(e)));
 }
 
-/** Universal action: the Settings entry in the add-on menu. */
 function onSettings(e) {
   return CardService.newUniversalActionResponseBuilder().displayAddOnCards([buildSettingsCard(null)]).build();
 }
 
-/** Bundles the message fields the cards display, including its participants. */
 function buildMsgInfo(message, timeZone) {
   return {
     rfcMessageId: getRfcMessageId(message),
@@ -35,19 +28,12 @@ function buildMsgInfo(message, timeZone) {
   };
 }
 
-/**
- * The RFC 822 Message-ID header, which is the same in every recipient's
- * mailbox, so the email is only recorded once. Empty if the header is missing
- */
 function getRfcMessageId(message) {
   return (message.getHeader('Message-ID') || message.getHeader('Message-Id') || '').trim();
 }
 
 /**
- * Splits a comma-separated address header (To/Cc/Bcc) into its addresses,
- * e.g. ['Jane Doe <jane@doe.com>', 'john@x.org'], splitting only on commas
- * that sit outside quotes and angle brackets so display names with commas
- * survive.
+ * Splits an address header on the commas outside quotes and angle brackets
  */
 function splitAddressHeader(headerString) {
   if (!headerString) return [];
@@ -74,9 +60,7 @@ function splitAddressHeader(headerString) {
 }
 
 /**
- * Parses an address header into [{address, email, name}], where address is
- * the original entry (sent to CiviCRM, which parses the name itself) and
- * name is only for display.
+ * [{address, email, name}] for each address in the header
  */
 function parseAddressList(headerString) {
   return splitAddressHeader(headerString).map(function (address) {
@@ -105,18 +89,15 @@ function collectParticipants(message) {
   return out;
 }
 
-/** Formats the message date in the given time zone. */
 function formatMessageDate(date, timeZone) {
   return Utilities.formatDate(date, timeZone, 'MMM d, yyyy h:mm a');
 }
 
-/** The user's time zone from the event (needs useLocaleFromApp), else the script's. */
 function getTimeZone(e) {
   var tz = e.commonEventObject && e.commonEventObject.timeZone;
   return (tz && tz.id) || Session.getScriptTimeZone();
 }
 
-/** Start of the body with whitespace collapsed, truncated. */
 function messageSnippet(message, maxLen) {
   var text = (message.getPlainBody() || '').replace(/\s+/g, ' ').trim();
   if (text.length > maxLen) {
@@ -125,10 +106,6 @@ function messageSnippet(message, maxLen) {
   return text;
 }
 
-/**
- * Escapes the plain-text body for CiviCRM's HTML activity details, keeping
- * line breaks. 
- */
 function plainTextToHtml(text) {
   return text
     .replace(/&/g, '&amp;')
@@ -137,22 +114,15 @@ function plainTextToHtml(text) {
     .replace(/\r?\n/g, '<br />\n');
 }
 
-/**
- * Reads the message the user currently has open. Uses the event's own
- * messageId + accessToken pair so it stays correct inside threads, where a
- * value captured at card-build time can point at the wrong message.
- */
 function readCurrentMessage(e) {
   GmailApp.setCurrentMessageAccessToken(e.gmail.accessToken);
   return GmailApp.getMessageById(e.gmail.messageId);
 }
 
-/** The active user's email address, lowercased. */
 function getUserEmail() {
   return Session.getActiveUser().getEmail().toLowerCase();
 }
 
-/** Extracts a bare email address out of a "Name <email@x.com>" header string. */
 function extractEmailAddress(address) {
   var match = address.match(/<([^>]+)>/);
   return match ? match[1] : address.trim();

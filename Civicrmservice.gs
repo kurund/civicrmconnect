@@ -1,11 +1,5 @@
-/**
- * Thin wrapper around the Gmail Connect CiviCRM extension's endpoint.
- * Each user connects with their personal URL from CiviCRM (Contacts >> Gmail
- * Connect)
- */
 var CiviCrmService = (function () {
 
-  /** POSTs {action, params} to the user's endpoint and returns the values. */
   function call(config, action, params) {
     var options = {
       method: 'post',
@@ -18,7 +12,6 @@ var CiviCrmService = (function () {
     try {
       response = UrlFetchApp.fetch(config.url, options);
     } catch (e) {
-      // Only addresses in the manifest's urlFetchWhitelist can be reached.
       if (/whitelisted/.test(e.message)) {
         throw new Error('CiviCRM Connect doesn\'t support CiviCRM sites at ' + siteOf(config.url) + ' yet. Please contact support.');
       }
@@ -44,27 +37,22 @@ var CiviCrmService = (function () {
   }
 
   /**
-   * Whether the email is already recorded, which of the emails belong to
-   * contacts, and who the user is connected as.
    * Returns {activity: {id, url} | null, contacts: {lowercased email: {id, display_name, url}},
-   * user: {id, display_name}}.
+   * user: {id, display_name}}
    */
   function lookup(config, rfcMessageId, emails) {
     return call(config, 'lookup', { messageId: rfcMessageId, emails: emails })[0];
   }
 
   /**
-   * Adds a contact for an address like "Jane Doe <jane@doe.com>" or returns
-   * the existing one. Returns {id, created}
+   * Returns {id, created}
    */
   function addContact(config, address) {
     return call(config, 'addContact', { email: address })[0];
   }
 
   /**
-   * Records the email as an External Email activity or returns the existing
-   * one for the same Message-ID. fields: subject, details, from, to, cc, bcc,
-   * messageId. Returns {id, url, created}
+   * fields: subject, details, from, to, cc, bcc, messageId. Returns {id, url, created}
    */
   function recordActivity(config, fields) {
     return call(config, 'recordActivity', fields)[0];
