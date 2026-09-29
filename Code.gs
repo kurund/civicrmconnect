@@ -6,7 +6,7 @@ function onHomepage(e) {
 function onGmailMessageOpen(e) {
   var config = getConfig();
   if (!config) {
-    return buildSettingsCard('Connect CiviCRM Connect to your CiviCRM to look up the people on your emails.');
+    return buildSettingsCard('Connect CiviCRM Connect add-on to your CiviCRM to look up the people on your emails.');
   }
 
   var message = readCurrentMessage(e);
