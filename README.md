@@ -40,3 +40,14 @@ domains in `urlFetchWhitelist` in `appsscript.json` (`.org`, `.com`, `.net`,
   (e.g. by another recipient) is not recorded again.
 - The plain-text body is recorded, so HTML from external senders is never
   rendered in CiviCRM.
+
+### License
+
+[AGPL-3.0](LICENSE)
+
+### Support
+
+Report problems or ask questions on [GitHub Issues](https://github.com/kurund/civicrmconnect/issues),
+or email [info@thirdsectordesign.org](mailto:info@thirdsectordesign.org).
+
+[Privacy policy](docs/privacy.md) · [Terms of service](docs/terms.md)
