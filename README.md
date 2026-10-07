@@ -1,3 +1,5 @@
+**Moved to https://lab.civicrm.org/extensions/civicrmconnect**
+
 ## CiviCRM Connect
 
 CiviCRM addon for gmail
